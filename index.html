@@ -107,10 +107,31 @@
       border-color: #bbf7d0;
     }
 
+    .counter-panel {
+      margin-top: 12px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      text-align: center;
+    }
+
+    .counter-value {
+      font-size: 2rem;
+      font-weight: 800;
+      color: var(--text);
+    }
+
+    .counter-sub {
+      font-size: 0.88rem;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
     .movement-box {
       margin-top: 12px;
-      min-height: 110px;
-      display: flex;
+      min-height: 100px;
+      display: none;
       flex-direction: column;
       align-items: center;
       justify-content: center;
@@ -123,23 +144,30 @@
     }
 
     .movement-title {
-      font-size: 1.25rem;
+      font-size: 1.2rem;
       font-weight: 800;
       color: var(--success);
     }
 
-    .reps {
-      font-size: 1rem;
-      font-weight: 700;
-      color: var(--text);
+    .completed-banner {
+      margin-top: 12px;
+      display: none;
+      padding: 14px;
+      border-radius: 12px;
+      background: #dcfce7;
+      border: 1px solid #86efac;
+      color: #166534;
+      font-size: 1.15rem;
+      font-weight: 800;
+      text-align: center;
     }
 
     label {
       display: block;
-      font-size: 0.82rem;
-      color: var(--muted);
-      margin-bottom: 4px;
-      font-weight: 600;
+      font-size: 0.85rem;
+      color: var(--text);
+      margin-bottom: 6px;
+      font-weight: 700;
     }
 
     input {
@@ -148,7 +176,8 @@
       border: 1px solid var(--border);
       border-radius: 10px;
       font-size: 0.95rem;
-      margin-bottom: 10px;
+      margin-bottom: 12px;
+      background: #ffffff;
     }
 
     .btn {
@@ -185,6 +214,11 @@
         <button id="btnBrazo" class="seg-btn active" onclick="selectLimb('Brazo')">Brazo</button>
         <button id="btnRodilla" class="seg-btn" onclick="selectLimb('Rodilla')">Rodilla</button>
       </div>
+
+      <div style="margin-top: 14px;">
+        <label for="targetInput">Repeticiones indicadas por la doctora</label>
+        <input id="targetInput" type="number" min="1" max="500" value="5" oninput="updateTarget()" onchange="updateTarget()" />
+      </div>
     </section>
 
     <section class="card">
@@ -192,9 +226,17 @@
         ESP32 no conectado. Conecta el ESP32 para recibir movimientos.
       </div>
 
-      <div id="movementDisplay" class="movement-box" style="display: none;">
+      <div class="counter-panel">
+        <div id="counterDisplay" class="counter-value">0 / 5</div>
+        <div id="counterSub" class="counter-sub">Faltan 5 repeticiones</div>
+      </div>
+
+      <div id="movementDisplay" class="movement-box">
         <div id="movementText" class="movement-title"></div>
-        <div id="repsText" class="reps">Movimientos realizados: 0</div>
+      </div>
+
+      <div id="completedBanner" class="completed-banner">
+        ¡Completado!
       </div>
 
       <button class="btn btn-reset" onclick="resetCount()">Reiniciar conteo</button>
@@ -213,11 +255,44 @@
     let isConnected = false;
     let selectedLimb = "Brazo";
     let movementCount = 0;
+    let targetReps = 5;
 
     function selectLimb(limb) {
       selectedLimb = limb;
       document.getElementById("btnBrazo").classList.toggle("active", limb === "Brazo");
       document.getElementById("btnRodilla").classList.toggle("active", limb === "Rodilla");
+      if (movementCount > 0) {
+        document.getElementById("movementText").textContent = `Movimiento de ${selectedLimb} realizado`;
+      }
+      renderProgress();
+    }
+
+    function updateTarget() {
+      const val = parseInt(document.getElementById("targetInput").value, 10);
+      if (!isNaN(val) && val >= 1) {
+        targetReps = val;
+      } else {
+        targetReps = 1;
+      }
+      renderProgress();
+    }
+
+    function renderProgress() {
+      document.getElementById("counterDisplay").textContent = `${movementCount} / ${targetReps}`;
+
+      const completed = movementCount >= targetReps;
+      const banner = document.getElementById("completedBanner");
+      const sub = document.getElementById("counterSub");
+
+      if (completed) {
+        banner.style.display = "block";
+        banner.textContent = `¡Completado! (${selectedLimb})`;
+        sub.textContent = "Meta alcanzada";
+      } else {
+        banner.style.display = "none";
+        const faltantes = targetReps - movementCount;
+        sub.textContent = `Faltan ${faltantes} ${faltantes === 1 ? "repetición" : "repeticiones"}`;
+      }
     }
 
     function updateConnectionUI(connected) {
@@ -236,6 +311,7 @@
         alertBox.textContent = "ESP32 no conectado. Conecta el ESP32 para recibir movimientos.";
         alertBox.className = "alert-box";
         document.getElementById("movementDisplay").style.display = "none";
+        document.getElementById("completedBanner").style.display = "none";
       }
     }
 
@@ -245,13 +321,13 @@
       const display = document.getElementById("movementDisplay");
       display.style.display = "flex";
       document.getElementById("movementText").textContent = `Movimiento de ${selectedLimb} realizado`;
-      document.getElementById("repsText").textContent = `Movimientos realizados: ${movementCount}`;
+      renderProgress();
     }
 
     function resetCount() {
       movementCount = 0;
       document.getElementById("movementDisplay").style.display = "none";
-      document.getElementById("repsText").textContent = "Movimientos realizados: 0";
+      renderProgress();
     }
 
     function connectESP32() {
@@ -294,6 +370,8 @@
         updateConnectionUI(false);
       });
     }
+
+    renderProgress();
   </script>
 </body>
 </html>
