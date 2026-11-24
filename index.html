@@ -190,6 +190,11 @@
       cursor: pointer;
     }
 
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     .btn-primary {
       background: var(--primary);
       color: #ffffff;
@@ -223,7 +228,7 @@
 
     <section class="card">
       <div id="espAlert" class="alert-box">
-        ESP32 no conectado. Conecta el ESP32 para recibir movimientos.
+        ESP32 no conectado. Envía el comando de conexión para comenzar.
       </div>
 
       <div class="counter-panel">
@@ -239,31 +244,26 @@
         ¡Completado!
       </div>
 
-      <button class="btn btn-reset" onclick="resetCount()">Reiniciar conteo</button>
+      <button id="btnReset" class="btn btn-reset" onclick="resetCount()" disabled>Reiniciar conteo</button>
     </section>
 
     <section class="card">
       <label for="topicInput">Canal MQTT</label>
       <input id="topicInput" type="text" value="simulador/medicina/as5600/evento" />
-      <button class="btn btn-primary" onclick="connectESP32()">Conectar ESP32</button>
+      <button id="btnConnect" class="btn btn-primary" onclick="sendConnectCommand()">Conectar ESP32</button>
     </section>
   </div>
 
   <script>
     const BROKER_WSS = "wss://broker.emqx.io:8084/mqtt";
     const TOPIC_CONTROL = "simulador/medicina/as5600/control";
+
     let client = null;
-    let isConnected = false;
+    let isEspConnected = false;
     let selectedLimb = "Brazo";
     let movementCount = 0;
     let targetReps = 5;
-    let heartbeatInterval = null;
-
-    function enviarControl(msg) {
-      if (client && client.connected()) {
-        client.publish(TOPIC_CONTROL, msg);
-      }
-    }
+    let ackTimeout = null;
 
     function selectLimb(limb) {
       selectedLimb = limb;
@@ -277,13 +277,11 @@
 
     function updateTarget() {
       const val = parseInt(document.getElementById("targetInput").value, 10);
-      if (!isNaN(val) && val >= 1) {
-        targetReps = val;
-      } else {
-        targetReps = 1;
-      }
+      targetReps = (!isNaN(val) && val >= 1) ? val : 1;
       renderProgress();
-      enviarControl(`META:${targetReps}`);
+      if (isEspConnected && client && client.connected()) {
+        client.publish(TOPIC_CONTROL, `META:${targetReps}`);
+      }
     }
 
     function renderProgress() {
@@ -304,25 +302,25 @@
       }
     }
 
-    function updateConnectionUI(connected) {
-      isConnected = connected;
+    function setEspConnectedState(connected, statusMsg = "") {
+      clearTimeout(ackTimeout);
+      isEspConnected = connected;
+
       const badge = document.getElementById("connBadge");
       const alertBox = document.getElementById("espAlert");
+      const btnReset = document.getElementById("btnReset");
 
-      if (!connected) {
-        clearInterval(heartbeatInterval);
-        heartbeatInterval = null;
-      }
+      btnReset.disabled = !connected;
 
       if (connected) {
         badge.textContent = "ESP32 conectado";
         badge.className = "badge connected";
-        alertBox.textContent = "ESP32 conectado. Esperando movimiento...";
+        alertBox.textContent = statusMsg || "ESP32 conectado. Esperando movimiento...";
         alertBox.className = "alert-box connected";
       } else {
         badge.textContent = "ESP32 no conectado";
         badge.className = "badge";
-        alertBox.textContent = "ESP32 no conectado. Conecta el ESP32 para recibir movimientos.";
+        alertBox.textContent = statusMsg || "ESP32 no conectado. Envía el comando de conexión para comenzar.";
         alertBox.className = "alert-box";
         document.getElementById("movementDisplay").style.display = "none";
         document.getElementById("completedBanner").style.display = "none";
@@ -330,7 +328,7 @@
     }
 
     function showMovement() {
-      if (!isConnected) return;
+      if (!isEspConnected) return;
       movementCount += 1;
       const display = document.getElementById("movementDisplay");
       display.style.display = "flex";
@@ -339,15 +337,20 @@
     }
 
     function resetCount() {
+      if (!isEspConnected) return;
       movementCount = 0;
       document.getElementById("movementDisplay").style.display = "none";
       renderProgress();
-      enviarControl("REINICIAR");
+      if (client && client.connected()) {
+        client.publish(TOPIC_CONTROL, "REINICIAR");
+      }
     }
 
-    function connectESP32() {
+    function sendConnectCommand() {
       const topic = document.getElementById("topicInput").value.trim();
       if (!topic) return;
+
+      setEspConnectedState(false, "Enviando comando de conexión al ESP32...");
 
       if (client) {
         client.end(true);
@@ -361,31 +364,47 @@
       });
 
       client.on("connect", () => {
-        client.subscribe(topic);
-        updateConnectionUI(true);
-        enviarControl(`META:${targetReps}`);
-        clearInterval(heartbeatInterval);
-        heartbeatInterval = setInterval(() => enviarControl("PING_APP"), 5000);
+        client.subscribe(topic, (err) => {
+          if (err) {
+            setEspConnectedState(false, "No se pudo suscribir al canal MQTT.");
+            return;
+          }
+          client.publish(TOPIC_CONTROL, `META:${targetReps}`);
+          client.publish(TOPIC_CONTROL, "CONECTAR_APP");
+
+          ackTimeout = setTimeout(() => {
+            if (!isEspConnected) {
+              setEspConnectedState(false, "Sin respuesta del ESP32. Verifica que esté encendido y en línea.");
+            }
+          }, 6000);
+        });
       });
 
       client.on("message", (_topic, payload) => {
-        if (!isConnected) return;
         const msg = payload.toString().trim().toUpperCase();
+
+        if (msg === "ESP32_LISTO") {
+          setEspConnectedState(true, "ESP32 conectado. Esperando movimiento...");
+          return;
+        }
+
+        if (!isEspConnected) return;
+
         if (msg === "LLEGO_B" || msg === "MOVIMIENTO" || msg === "PRESENTE" || msg === "1") {
           showMovement();
         }
       });
 
       client.on("close", () => {
-        updateConnectionUI(false);
+        setEspConnectedState(false);
       });
 
       client.on("offline", () => {
-        updateConnectionUI(false);
+        setEspConnectedState(false);
       });
 
       client.on("error", () => {
-        updateConnectionUI(false);
+        setEspConnectedState(false, "Error de conexión con el broker MQTT.");
       });
     }
 
