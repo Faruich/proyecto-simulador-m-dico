@@ -14,8 +14,6 @@
       --primary: #0b6efd;
       --success: #16a34a;
       --danger: #dc2626;
-      --warning-bg: #fef9c3;
-      --warning-text: #854d0e;
       --border: #dce5ef;
     }
 
@@ -107,12 +105,6 @@
       background: #f0fdf4;
       color: #166534;
       border-color: #bbf7d0;
-    }
-
-    .alert-box.waiting {
-      background: var(--warning-bg);
-      color: var(--warning-text);
-      border-color: #fde047;
     }
 
     .counter-panel {
@@ -240,7 +232,6 @@
       <span id="connBadge" class="badge">ESP32 no conectado</span>
     </header>
 
-    <!-- PANTALLA 1: Configuración de extremidad, repeticiones y botón Iniciar -->
     <section id="setupScreen" class="card">
       <div class="row">
         <button id="btnBrazo" class="seg-btn active" onclick="selectLimb('Brazo')">Brazo</button>
@@ -263,7 +254,6 @@
       <button id="btnStart" class="btn btn-success" onclick="startSession()" disabled>Iniciar</button>
     </section>
 
-    <!-- PANTALLA 2: Ejecución de movimientos / Completado -->
     <section id="sessionScreen" class="card" style="display: none;">
       <div id="espAlert" class="alert-box connected">
         ESP32 conectado. Realizando movimientos...
@@ -286,7 +276,6 @@
       <button id="btnContinue" class="btn btn-continue" style="display: none;" onclick="continueAfterComplete()">Continuar</button>
     </section>
 
-    <!-- Conexión MQTT -->
     <section class="card">
       <label for="topicInput">Canal MQTT</label>
       <input id="topicInput" type="text" value="simulador/medicina/as5600/evento" />
@@ -306,6 +295,12 @@
     let movementCount = 0;
     let targetReps = 0;
     let ackTimeout = null;
+
+    function publicarControl(comando) {
+      if (client && client.connected) {
+        client.publish(TOPIC_CONTROL, comando);
+      }
+    }
 
     function selectLimb(limb) {
       selectedLimb = limb;
@@ -415,9 +410,7 @@
       renderProgress();
       showScreen("session");
 
-      if (client && client.connected()) {
-        client.publish(TOPIC_CONTROL, `INICIAR:${targetReps}`);
-      }
+      publicarControl(`INICIAR:${targetReps}`);
     }
 
     function cancelSession() {
@@ -428,9 +421,7 @@
       document.getElementById("completedBanner").style.display = "none";
       showScreen("setup");
 
-      if (client && client.connected()) {
-        client.publish(TOPIC_CONTROL, "CANCELAR");
-      }
+      publicarControl("CANCELAR");
     }
 
     function continueAfterComplete() {
@@ -441,9 +432,7 @@
       document.getElementById("completedBanner").style.display = "none";
       showScreen("setup");
 
-      if (client && client.connected()) {
-        client.publish(TOPIC_CONTROL, "CONTINUAR");
-      }
+      publicarControl("CONTINUAR");
     }
 
     function showMovement() {
@@ -485,7 +474,7 @@
             setEspConnectedState(false, "No se pudo suscribir al canal MQTT.");
             return;
           }
-          client.publish(TOPIC_CONTROL, "CONECTAR_APP");
+          publicarControl("CONECTAR_APP");
 
           ackTimeout = setTimeout(() => {
             if (!isEspConnected) {
