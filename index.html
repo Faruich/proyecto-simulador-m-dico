@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Simulador Médico de Rehabilitación — ESP32 + AS5600</title>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <style>
+    :root {
+      --bg: #f3f7fb;
+      --card: #ffffff;
+      --text: #162433;
+      --muted: #5c7085;
+      --primary: #0b6efd;
+      --success: #16a34a;
+      --warning: #d97706;
+      --danger: #dc2626;
+      --border: #dce5ef;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      padding: 16px;
+      min-height: 100vh;
+    }
+
+    .app {
+      max-width: 540px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    header {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 2px 10px rgba(15, 23, 42, 0.04);
+    }
+
+    h1 {
+      font-size: 1.2rem;
+      margin-bottom: 4px;
+    }
+
+    .subtitle {
+      font-size: 0.88rem;
+      color: var(--muted);
+    }
+
+    .status-bar {
+      margin-top: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+      font-size: 0.85rem;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-weight: 600;
+      background: #e9eef5;
+      color: var(--text);
+    }
+
+    .badge.connected {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .badge.demo {
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 2px 10px rgba(15, 23, 42, 0.04);
+    }
+
+    .row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .seg-btn {
+      flex: 1;
+      min-width: 120px;
+      padding: 12px;
+      border: 1.5px solid var(--border);
+      border-radius: 12px;
+      background: #f8fafc;
+      color: var(--text);
+      font-weight: 600;
+      font-size: 0.95rem;
+      cursor: pointer;
+    }
+
+    .seg-btn.active {
+      border-color: var(--primary);
+      background: #e8f1ff;
+      color: var(--primary);
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .metric-box {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      text-align: center;
+    }
+
+    .metric-label {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .metric-value {
+      font-size: 1.8rem;
+      font-weight: 800;
+    }
+
+    .visual-stage {
+      margin-top: 12px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px 14px;
+      text-align: center;
+    }
+
+    .track {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 14px 0;
+    }
+
+    .node {
+      flex: 1;
+      padding: 12px 8px;
+      border-radius: 12px;
+      border: 2px solid var(--border);
+      background: #ffffff;
+      font-weight: 700;
+      font-size: 0.9rem;
+    }
+
+    .node.active-a {
+      border-color: var(--primary);
+      background: #eff6ff;
+      color: var(--primary);
+    }
+
+    .node.active-b {
+      border-color: var(--success);
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .arrow {
+      font-size: 1.2rem;
+      color: var(--muted);
+      font-weight: bold;
+    }
+
+    .state-banner {
+      padding: 12px;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 1rem;
+      background: #e2e8f0;
+      color: #1e293b;
+    }
+
+    .state-banner.reached-b {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .state-banner.waiting-a {
+      background: #e0f2fe;
+      color: #075985;
+    }
+
+    label {
+      display: block;
+      font-size: 0.82rem;
+      color: var(--muted);
+      margin-bottom: 4px;
+      margin-top: 10px;
+      font-weight: 600;
+    }
+
+    input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 0.95rem;
+      background: #ffffff;
+    }
+
+    .btn {
+      padding: 12px 14px;
+      border: none;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 0.92rem;
+      cursor: pointer;
+      flex: 1;
+      min-width: 130px;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: #ffffff;
+    }
+
+    .btn-success {
+      background: var(--success);
+      color: #ffffff;
+    }
+
+    .btn-outline {
+      background: #ffffff;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .btn-danger {
+      background: #fee2e2;
+      color: var(--danger);
+    }
+
+    .controls-grid {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+
+    .log {
+      margin-top: 10px;
+      max-height: 120px;
+      overflow-y: auto;
+      background: #0f172a;
+      color: #e2e8f0;
+      border-radius: 10px;
+      padding: 10px;
+      font-size: 0.78rem;
+      line-height: 1.45;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Simulador Médico de Rehabilitación</h1>
+      <p class="subtitle">Detección de movimiento A → B con ESP32 + AS5600</p>
+      <div class="status-bar">
+        <span id="connBadge" class="badge demo">Modo Demo</span>
+        <span id="topicLabel" class="subtitle">Canal: simulador/as5600/movimiento</span>
+      </div>
+    </header>
+
+    <section class="card">
+      <div class="row">
+        <button id="btnArm" class="seg-btn active" onclick="selectJoint('Brazo')">Movimiento de Brazo</button>
+        <button id="btnKnee" class="seg-btn" onclick="selectJoint('Rodilla')">Movimiento de Rodilla</button>
+      </div>
+
+      <div class="metrics">
+        <div class="metric-box">
+          <div class="metric-label">Repeticiones</div>
+          <div id="repsCount" class="metric-value">0</div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-label">Meta de sesión</div>
+          <div class="metric-value"><span id="goalDisplay">10</span></div>
+        </div>
+      </div>
+
+      <div class="visual-stage">
+        <div style="font-size: 0.85rem; color: var(--muted);">
+          Articulación activa: <strong id="jointLabel">Brazo</strong>
+        </div>
+
+        <div class="track">
+          <div id="nodeA" class="node active-a">Posición A<br><small>Inicio / Reposo</small></div>
+          <div class="arrow">→</div>
+          <div id="nodeB" class="node">Posición B<br><small>Imán en AS5600</small></div>
+        </div>
+
+        <div id="stateBanner" class="state-banner waiting-a">
+          En espera en Posición A — Acerca el imán a Posición B
+        </div>
+      </div>
+
+      <div class="controls-grid">
+        <button class="btn btn-success" onclick="handleMagnetEvent('LLEGO_B')">Simular Llegada a B</button>
+        <button class="btn btn-outline" onclick="handleMagnetEvent('SALIO_B')">Simular Regreso a A</button>
+        <button class="btn btn-danger" onclick="resetReps()">Reiniciar Conteo</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <strong>Conexión MQTT en tiempo real (ESP32 por Wi-Fi)</strong>
+      <label for="topicInput">Canal MQTT (debe coincidir con tu ESP32)</label>
+      <input id="topicInput" type="text" value="simulador/medicina/as5600/evento" />
+
+      <label for="goalInput">Meta de repeticiones</label>
+      <input id="goalInput" type="number" min="1" max="200" value="10" onchange="updateGoal()" />
+
+      <div class="controls-grid">
+        <button class="btn btn-primary" onclick="connectMQTT()">Conectar ESP32</button>
+        <button class="btn btn-outline" onclick="useDemoMode()">Usar Modo Demo</button>
+      </div>
+
+      <div id="eventLog" class="log">[Sistema] Listo en Modo Demo. Usa los botones o conecta tu ESP32.</div>
+    </section>
+  </div>
+
+  <script>
+    const BROKER_WSS = "wss://broker.emqx.io:8084/mqtt";
+    let client = null;
+    let reps = 0;
+    let goal = 10;
+    let joint = "Brazo";
+    let magnetAtB = false;
+
+    function addLog(msg) {
+      const logEl = document.getElementById("eventLog");
+      const time = new Date().toLocaleTimeString();
+      logEl.innerHTML += `<div>[${time}] ${msg}</div>`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function selectJoint(selected) {
+      joint = selected;
+      document.getElementById("jointLabel").textContent = selected;
+      document.getElementById("btnArm").classList.toggle("active", selected === "Brazo");
+      document.getElementById("btnKnee").classList.toggle("active", selected === "Rodilla");
+      addLog(`Articulación cambiada a: ${selected}`);
+    }
+
+    function updateGoal() {
+      const val = parseInt(document.getElementById("goalInput").value, 10);
+      if (val > 0) {
+        goal = val;
+        document.getElementById("goalDisplay").textContent = goal;
+      }
+    }
+
+    function renderState() {
+      document.getElementById("repsCount").textContent = reps;
+      const nodeA = document.getElementById("nodeA");
+      const nodeB = document.getElementById("nodeB");
+      const banner = document.getElementById("stateBanner");
+
+      if (magnetAtB) {
+        nodeA.className = "node";
+        nodeB.className = "node active-b";
+        banner.className = "state-banner reached-b";
+        banner.textContent = `¡Imán detectado en Posición B! (${joint})`;
+      } else {
+        nodeA.className = "node active-a";
+        nodeB.className = "node";
+        banner.className = "state-banner waiting-a";
+        banner.textContent = `En Posición A — Realiza el movimiento hacia B (${joint})`;
+      }
+    }
+
+    function handleMagnetEvent(eventName) {
+      const clean = eventName.trim().toUpperCase();
+
+      if ((clean === "LLEGO_B" || clean === "PRESENTE" || clean === "1") && !magnetAtB) {
+        magnetAtB = true;
+        reps += 1;
+        renderState();
+        addLog(`Movimiento completado a Posición B. Repetición #${reps}`);
+        if (reps === goal) {
+          addLog(`¡Meta de ${goal} repeticiones alcanzada!`);
+        }
+      } else if (clean === "SALIO_B" || clean === "AUSENTE" || clean === "0") {
+        magnetAtB = false;
+        renderState();
+        addLog("Imán fuera de Posición B (regreso a Posición A).");
+      }
+    }
+
+    function resetReps() {
+      reps = 0;
+      magnetAtB = false;
+      renderState();
+      addLog("Conteo reiniciado a 0.");
+    }
+
+    function connectMQTT() {
+      const topic = document.getElementById("topicInput").value.trim();
+      document.getElementById("topicLabel").textContent = `Canal: ${topic}`;
+
+      if (client) {
+        client.end(true);
+      }
+
+      const clientId = "web_sim_" + Math.random().toString(16).substr(2, 8);
+      addLog("Conectando al broker MQTT...");
+
+      client = mqtt.connect(BROKER_WSS, {
+        clientId,
+        clean: true,
+        connectTimeout: 5000
+      });
+
+      client.on("connect", () => {
+        const badge = document.getElementById("connBadge");
+        badge.textContent = "Conectado (MQTT)";
+        badge.className = "badge connected";
+        addLog(`Conectado. Suscrito a "${topic}"`);
+        client.subscribe(topic);
+      });
+
+      client.on("message", (_receivedTopic, payload) => {
+        handleMagnetEvent(payload.toString());
+      });
+
+      client.on("error", (err) => {
+        addLog("Error de conexión MQTT: " + err.message);
+      });
+    }
+
+    function useDemoMode() {
+      if (client) {
+        client.end(true);
+        client = null;
+      }
+      const badge = document.getElementById("connBadge");
+      badge.textContent = "Modo Demo";
+      badge.className = "badge demo";
+      addLog("Modo Demo activado.");
+    }
+
+    renderState();
+  </script>
+</body>
+</html>
