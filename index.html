@@ -14,6 +14,8 @@
       --primary: #0b6efd;
       --success: #16a34a;
       --danger: #dc2626;
+      --warning-bg: #fef9c3;
+      --warning-text: #854d0e;
       --border: #dce5ef;
     }
 
@@ -107,6 +109,12 @@
       border-color: #bbf7d0;
     }
 
+    .alert-box.waiting {
+      background: var(--warning-bg);
+      color: var(--warning-text);
+      border-color: #fde047;
+    }
+
     .counter-panel {
       margin-top: 12px;
       background: #f8fafc;
@@ -130,21 +138,20 @@
 
     .movement-box {
       margin-top: 12px;
-      min-height: 100px;
+      min-height: 86px;
       display: none;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 6px;
       border-radius: 14px;
       border: 1px solid var(--border);
       background: #f8fafc;
-      padding: 16px;
+      padding: 14px;
       text-align: center;
     }
 
     .movement-title {
-      font-size: 1.2rem;
+      font-size: 1.15rem;
       font-weight: 800;
       color: var(--success);
     }
@@ -200,10 +207,29 @@
       color: #ffffff;
     }
 
-    .btn-reset {
+    .btn-success {
+      margin-top: 10px;
+      background: var(--success);
+      color: #ffffff;
+    }
+
+    .btn-cancel {
       margin-top: 10px;
       background: #fee2e2;
       color: var(--danger);
+    }
+
+    .btn-continue {
+      margin-top: 10px;
+      background: var(--primary);
+      color: #ffffff;
+    }
+
+    .help-text {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: -6px;
+      margin-bottom: 12px;
     }
   </style>
 </head>
@@ -214,26 +240,38 @@
       <span id="connBadge" class="badge">ESP32 no conectado</span>
     </header>
 
-    <section class="card">
+    <!-- PANTALLA 1: Configuración de extremidad, repeticiones y botón Iniciar -->
+    <section id="setupScreen" class="card">
       <div class="row">
         <button id="btnBrazo" class="seg-btn active" onclick="selectLimb('Brazo')">Brazo</button>
         <button id="btnRodilla" class="seg-btn" onclick="selectLimb('Rodilla')">Rodilla</button>
       </div>
 
       <div style="margin-top: 14px;">
-        <label for="targetInput">Repeticiones indicadas por la doctora</label>
-        <input id="targetInput" type="number" min="1" max="500" value="5" oninput="updateTarget()" onchange="updateTarget()" />
+        <label for="targetInput">Repeticiones indicadas (entero mayor que 1)</label>
+        <input
+          id="targetInput"
+          type="text"
+          inputmode="numeric"
+          pattern="[0-9]*"
+          placeholder="Ej. 5"
+          oninput="sanitizeTargetInput(this)"
+        />
+        <div class="help-text">Solo números enteros mayores que 1 (sin letras ni símbolos).</div>
       </div>
+
+      <button id="btnStart" class="btn btn-success" onclick="startSession()" disabled>Iniciar</button>
     </section>
 
-    <section class="card">
-      <div id="espAlert" class="alert-box">
-        ESP32 no conectado. Envía el comando de conexión para comenzar.
+    <!-- PANTALLA 2: Ejecución de movimientos / Completado -->
+    <section id="sessionScreen" class="card" style="display: none;">
+      <div id="espAlert" class="alert-box connected">
+        ESP32 conectado. Realizando movimientos...
       </div>
 
       <div class="counter-panel">
-        <div id="counterDisplay" class="counter-value">0 / 5</div>
-        <div id="counterSub" class="counter-sub">Faltan 5 repeticiones</div>
+        <div id="counterDisplay" class="counter-value">0 / 2</div>
+        <div id="counterSub" class="counter-sub">Faltan 2 repeticiones</div>
       </div>
 
       <div id="movementDisplay" class="movement-box">
@@ -244,9 +282,11 @@
         ¡Completado!
       </div>
 
-      <button id="btnReset" class="btn btn-reset" onclick="resetCount()" disabled>Reiniciar conteo</button>
+      <button id="btnCancel" class="btn btn-cancel" onclick="cancelSession()">Cancelar</button>
+      <button id="btnContinue" class="btn btn-continue" style="display: none;" onclick="continueAfterComplete()">Continuar</button>
     </section>
 
+    <!-- Conexión MQTT -->
     <section class="card">
       <label for="topicInput">Canal MQTT</label>
       <input id="topicInput" type="text" value="simulador/medicina/as5600/evento" />
@@ -260,9 +300,11 @@
 
     let client = null;
     let isEspConnected = false;
+    let sessionActive = false;
+    let isCompleted = false;
     let selectedLimb = "Brazo";
     let movementCount = 0;
-    let targetReps = 5;
+    let targetReps = 0;
     let ackTimeout = null;
 
     function selectLimb(limb) {
@@ -275,29 +317,59 @@
       renderProgress();
     }
 
-    function updateTarget() {
-      const val = parseInt(document.getElementById("targetInput").value, 10);
-      targetReps = (!isNaN(val) && val >= 1) ? val : 1;
-      renderProgress();
-      if (isEspConnected && client && client.connected()) {
-        client.publish(TOPIC_CONTROL, `META:${targetReps}`);
+    function sanitizeTargetInput(inputEl) {
+      const cleaned = inputEl.value.replace(/[^0-9]/g, "");
+      if (inputEl.value !== cleaned) {
+        inputEl.value = cleaned;
+      }
+      validateStartButton();
+    }
+
+    function getValidTargetValue() {
+      const raw = document.getElementById("targetInput").value;
+      if (!/^[0-9]+$/.test(raw)) return null;
+      const num = parseInt(raw, 10);
+      return num > 1 ? num : null;
+    }
+
+    function validateStartButton() {
+      const validTarget = getValidTargetValue();
+      document.getElementById("btnStart").disabled = !(isEspConnected && validTarget !== null);
+    }
+
+    function showScreen(mode) {
+      const setupScreen = document.getElementById("setupScreen");
+      const sessionScreen = document.getElementById("sessionScreen");
+
+      if (mode === "session") {
+        setupScreen.style.display = "none";
+        sessionScreen.style.display = "block";
+      } else {
+        sessionScreen.style.display = "none";
+        setupScreen.style.display = "block";
       }
     }
 
     function renderProgress() {
-      document.getElementById("counterDisplay").textContent = `${movementCount} / ${targetReps}`;
+      const totalMostrar = targetReps > 1 ? targetReps : 0;
+      document.getElementById("counterDisplay").textContent = `${movementCount} / ${totalMostrar}`;
 
-      const completed = movementCount >= targetReps;
       const banner = document.getElementById("completedBanner");
       const sub = document.getElementById("counterSub");
+      const btnCancel = document.getElementById("btnCancel");
+      const btnContinue = document.getElementById("btnContinue");
 
-      if (completed) {
+      if (isCompleted) {
         banner.style.display = "block";
         banner.textContent = `¡Completado! (${selectedLimb})`;
         sub.textContent = "Meta alcanzada";
+        btnCancel.style.display = "none";
+        btnContinue.style.display = "block";
       } else {
         banner.style.display = "none";
-        const faltantes = targetReps - movementCount;
+        btnCancel.style.display = "block";
+        btnContinue.style.display = "none";
+        const faltantes = Math.max(0, targetReps - movementCount);
         sub.textContent = `Faltan ${faltantes} ${faltantes === 1 ? "repetición" : "repeticiones"}`;
       }
     }
@@ -308,16 +380,16 @@
 
       const badge = document.getElementById("connBadge");
       const alertBox = document.getElementById("espAlert");
-      const btnReset = document.getElementById("btnReset");
-
-      btnReset.disabled = !connected;
 
       if (connected) {
         badge.textContent = "ESP32 conectado";
         badge.className = "badge connected";
-        alertBox.textContent = statusMsg || "ESP32 conectado. Esperando movimiento...";
+        alertBox.textContent = statusMsg || "ESP32 conectado. Realizando movimientos...";
         alertBox.className = "alert-box connected";
       } else {
+        sessionActive = false;
+        isCompleted = false;
+        showScreen("setup");
         badge.textContent = "ESP32 no conectado";
         badge.className = "badge";
         alertBox.textContent = statusMsg || "ESP32 no conectado. Envía el comando de conexión para comenzar.";
@@ -325,25 +397,69 @@
         document.getElementById("movementDisplay").style.display = "none";
         document.getElementById("completedBanner").style.display = "none";
       }
+
+      validateStartButton();
+    }
+
+    function startSession() {
+      const validTarget = getValidTargetValue();
+      if (!isEspConnected || validTarget === null) return;
+
+      targetReps = validTarget;
+      movementCount = 0;
+      sessionActive = true;
+      isCompleted = false;
+
+      document.getElementById("movementDisplay").style.display = "none";
+      document.getElementById("completedBanner").style.display = "none";
+      renderProgress();
+      showScreen("session");
+
+      if (client && client.connected()) {
+        client.publish(TOPIC_CONTROL, `INICIAR:${targetReps}`);
+      }
+    }
+
+    function cancelSession() {
+      sessionActive = false;
+      isCompleted = false;
+      movementCount = 0;
+      document.getElementById("movementDisplay").style.display = "none";
+      document.getElementById("completedBanner").style.display = "none";
+      showScreen("setup");
+
+      if (client && client.connected()) {
+        client.publish(TOPIC_CONTROL, "CANCELAR");
+      }
+    }
+
+    function continueAfterComplete() {
+      sessionActive = false;
+      isCompleted = false;
+      movementCount = 0;
+      document.getElementById("movementDisplay").style.display = "none";
+      document.getElementById("completedBanner").style.display = "none";
+      showScreen("setup");
+
+      if (client && client.connected()) {
+        client.publish(TOPIC_CONTROL, "CONTINUAR");
+      }
     }
 
     function showMovement() {
-      if (!isEspConnected) return;
+      if (!isEspConnected || !sessionActive || isCompleted) return;
       movementCount += 1;
+
       const display = document.getElementById("movementDisplay");
       display.style.display = "flex";
       document.getElementById("movementText").textContent = `Movimiento de ${selectedLimb} realizado`;
-      renderProgress();
-    }
 
-    function resetCount() {
-      if (!isEspConnected) return;
-      movementCount = 0;
-      document.getElementById("movementDisplay").style.display = "none";
-      renderProgress();
-      if (client && client.connected()) {
-        client.publish(TOPIC_CONTROL, "REINICIAR");
+      if (movementCount >= targetReps) {
+        isCompleted = true;
+        sessionActive = false;
       }
+
+      renderProgress();
     }
 
     function sendConnectCommand() {
@@ -369,7 +485,6 @@
             setEspConnectedState(false, "No se pudo suscribir al canal MQTT.");
             return;
           }
-          client.publish(TOPIC_CONTROL, `META:${targetReps}`);
           client.publish(TOPIC_CONTROL, "CONECTAR_APP");
 
           ackTimeout = setTimeout(() => {
@@ -384,11 +499,11 @@
         const msg = payload.toString().trim().toUpperCase();
 
         if (msg === "ESP32_LISTO") {
-          setEspConnectedState(true, "ESP32 conectado. Esperando movimiento...");
+          setEspConnectedState(true, "ESP32 conectado. Ingresa las repeticiones y pulsa Iniciar.");
           return;
         }
 
-        if (!isEspConnected) return;
+        if (!isEspConnected || !sessionActive) return;
 
         if (msg === "LLEGO_B" || msg === "MOVIMIENTO" || msg === "PRESENTE" || msg === "1") {
           showMovement();
@@ -408,6 +523,7 @@
       });
     }
 
+    validateStartButton();
     renderProgress();
   </script>
 </body>
