@@ -251,11 +251,19 @@
 
   <script>
     const BROKER_WSS = "wss://broker.emqx.io:8084/mqtt";
+    const TOPIC_CONTROL = "simulador/medicina/as5600/control";
     let client = null;
     let isConnected = false;
     let selectedLimb = "Brazo";
     let movementCount = 0;
     let targetReps = 5;
+    let heartbeatInterval = null;
+
+    function enviarControl(msg) {
+      if (client && client.connected()) {
+        client.publish(TOPIC_CONTROL, msg);
+      }
+    }
 
     function selectLimb(limb) {
       selectedLimb = limb;
@@ -275,6 +283,7 @@
         targetReps = 1;
       }
       renderProgress();
+      enviarControl(`META:${targetReps}`);
     }
 
     function renderProgress() {
@@ -299,6 +308,11 @@
       isConnected = connected;
       const badge = document.getElementById("connBadge");
       const alertBox = document.getElementById("espAlert");
+
+      if (!connected) {
+        clearInterval(heartbeatInterval);
+        heartbeatInterval = null;
+      }
 
       if (connected) {
         badge.textContent = "ESP32 conectado";
@@ -328,6 +342,7 @@
       movementCount = 0;
       document.getElementById("movementDisplay").style.display = "none";
       renderProgress();
+      enviarControl("REINICIAR");
     }
 
     function connectESP32() {
@@ -348,6 +363,9 @@
       client.on("connect", () => {
         client.subscribe(topic);
         updateConnectionUI(true);
+        enviarControl(`META:${targetReps}`);
+        clearInterval(heartbeatInterval);
+        heartbeatInterval = setInterval(() => enviarControl("PING_APP"), 5000);
       });
 
       client.on("message", (_topic, payload) => {
